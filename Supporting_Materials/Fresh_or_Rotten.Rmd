@@ -1,0 +1,1894 @@
+---
+title: "Fresh or Rotten--A Predictive Analysis of Rotten Tomatoes Scores"
+author: "Bryce Stepaniuk and Jack Lohman"
+date: "14 December 2024"
+output: 
+  html_document:
+    theme: journal
+    code_folding: "hide"
+    toc: true
+---
+
+```{r setup, include=FALSE}
+# Formatting
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+
+# Libraries
+library(tidyverse)  
+library(randomForest)  
+library(caret)     
+library(rpart)   
+library(kableExtra)
+library(plotly)
+
+# Import data
+RTreviews <- read_csv("rotten_tomatoes_critic_reviews.csv")
+RTmovies <- read_csv("rotten_tomatoes_movies.csv")
+```
+
+# Introduction
+Imagine having the ability to accurately predict the review score of any movie before its release. While this might seem like an interesting tool for choosing films to watch, its practical value in the past may have been limited. However, with the recent legalization of betting on movie review scores, such predictive capabilities now have the potential to provide significant competitive advantages in the gambling market. This opportunity has inspired our team to analyze film and review data to develop a predictive model capable of accurately forecasting Rotten Tomatoes critic scores, commonly referred to as the Tomatometer.
+
+Rotten Tomatoes is a well-known online aggregator of movie and TV reviews, offering scores that reflect the general consensus on a title’s quality. It is a major influencer in the entertainment industry, relied upon by audiences, critics, and studios alike. The Tomatometer, the focus of our project, represents the percentage of professional critic reviews that are positive for a given film or TV show. This score is calculated by dividing the number of fresh (positive) reviews by the total number of reviews. Films with at least 60% positive reviews are labeled “fresh,” while those with less than 60% are considered “rotten.”
+
+Our interest in creating a predictive data model for Rotten Tomatoes scores was sparked while exploring the prediction market website Kalshi. This platform allows users to place bets on the outcomes of various events, including Rotten Tomatoes Tomatometer scores for unreleased films. We hypothesized that, as this feature is relatively new, the odds and probabilities on Rotten Tomatoes scores might be less refined and more prone to inefficiencies than those found in more established betting markets, such as sports betting. This represents a unique opportunity to leverage a well-designed model as a strategic advantage in Rotten Tomatoes betting.
+
+To pursue this goal, we selected the "Rotten Tomatoes Movies and Critic Reviews" dataset from Kaggle. This dataset was ideal for our analysis because it included key variables such as the Tomatometer score, review sentiments (fresh or rotten), and other movie-related information, including runtime, production company, director, writers, cast, and more. Additionally, the dataset featured a subset of individual critic reviews, providing granular insights into reviewer behavior and sentiment. The dataset spans a wide time range, covering movies released from 1914 to 2020, enabling our model to account for long-term trends and recent shifts in film scoring.
+
+Using this dataset, we aim to develop a robust prediction model capable of accurately estimating Rotten Tomatoes scores for unreleased films. Our ultimate goal is to trust the model’s results enough to use them for strategic betting on Kalshi’s Rotten Tomatoes score markets, providing a competitive edge in this emerging area.
+
+# Ethical Considerations & Stakeholders
+
+### Stakeholders
+
+The success and ethical implications of this project involve several key stakeholders, each with distinct interests and potential impacts. By identifying and addressing their needs and concerns, the project can balance its goals with fairness, respect, and ethical integrity.
+
+Critics and Review Platforms:
+Rotten Tomatoes and the critics who contribute scores are indirect yet critical stakeholders. Their intellectual property and reputation must be respected throughout the project. Using their data or insights without proper acknowledgment or permissions could harm their standing and jeopardize trust in their platform.
+
+Kalshi Platform:
+Kalshi, the gambling platform where the predictions may be utilized, is a central stakeholder. The use of a prediction model could influence their market dynamics and reputation, particularly if it is perceived as creating an unfair advantage for certain users. Maintaining a fair and transparent approach is crucial to uphold the platform’s integrity and public trust.
+
+Bettors:
+Other participants on Kalshi are also significant stakeholders. The competitive advantage provided by an advanced prediction model could disadvantage less technologically equipped bettors, raising fairness concerns. Ensuring that the system remains fair for all participants is an important ethical consideration.
+
+Movie Studios and Creators:
+Film studios and creators may experience indirect effects from this project. If the model’s predictions were to influence public opinion or betting outcomes, it could sway how movies are marketed, reviewed, or perceived by audiences. This stakeholder group’s interests must be considered to avoid unintended disruptions to the industry.
+
+Project Team:
+The team developing and deploying the model has a responsibility to adhere to ethical guidelines and maintain the integrity of their work. Their decisions will shape the project’s impact, making it essential to prioritize professionalism and accountability throughout the process.
+
+General Public:
+The general audience, while not directly involved, could be indirectly impacted if the project alters how movies are reviewed, marketed, or perceived. Public trust in reviews, betting markets, and film criticism must be preserved to ensure the broader societal implications remain positive.
+
+### Ethical Considerations
+
+Transparency and integrity are essential in developing a prediction model for Rotten Tomatoes critic scores, especially when considering its use in competitive environments like betting platforms such as Kalshi. The methodology, potential biases, and limitations of the model must be openly disclosed to maintain credibility and ethical standards. Clear communication about the scope and reliability of the model will help ensure that stakeholders understand its capabilities and constraints.
+
+One significant ethical challenge involves the risk of manipulation of public perception. If predictions are shared publicly or influence decision-making, they could unfairly sway public opinion or betting markets. Additionally, public sharing might lead to the model being misinterpreted, resulting in overconfidence among bettors or other stakeholders who rely on its predictions. Such outcomes could amplify unintended consequences and undermine trust in the system.
+
+Bias in the model’s predictions is another critical concern. Predictive models often inherit biases from the data they are trained on. For example, historical critic scores may reflect genre preferences, specific reviewer tendencies, or systemic inequities, potentially disadvantaging certain types of films or studios. Addressing these biases requires thoughtful data selection, pre-processing, and validation to ensure equitable outcomes.
+
+The ethical implications of using a prediction model for gambling consider if the model produces highly accurate predictions, than the fairness and integrity of the betting platform could be disrupted negatively. This is because bettors without access to similar tools would face an uneven playing field, raising fairness concerns. Ensuring that the competitive advantage provided by the model does not exploit or harm other participants is a key ethical responsibility.
+
+Data privacy is another critical aspect. If the model incorporates personal data, such as critics' profiles or reviews, it is essential to handle this data responsibly. It must not be misused or applied beyond the scope of the project’s objectives. Maintaining strict adherence to ethical standards will protect individual data and privacy, and the integrity of the project.
+
+In summary, transparency, fairness, and accountability are the cornerstones of ethical considerations in this project. By addressing potential risks such as public misinterpretation, bias, gambling ethics, and data privacy, our project can maintain high ethical standards while still achieving its objectives.
+
+
+# Data Exploration
+```{r}
+# Review data set cleaning 
+RTreviews <- merge(RTreviews, RTmovies[, c("rotten_tomatoes_link", "original_release_date")], by = "rotten_tomatoes_link")
+
+RTreviews <- RTreviews %>% filter(as.Date(original_release_date) > as.Date(review_date))
+
+RTreviews <- RTreviews %>%
+  group_by(rotten_tomatoes_link) %>%
+  mutate(
+    fresh_percent = mean(review_type == "Fresh") * 100,
+    review_count = n(),
+    top_critic_count = sum(top_critic == "TRUE")
+    ) 
+
+
+
+# Movie dataset cleaning
+RTmovies.1 <- RTmovies %>%
+  filter(tomatometer_count > 12) %>%
+  select(-tomatometer_count, -tomatometer_fresh_critics_count, -tomatometer_rotten_critics_count, -tomatometer_status, -tomatometer_top_critics_count, -critics_consensus, -movie_title, -audience_count, -streaming_release_date, -movie_info, -audience_status, -audience_rating) 
+
+RTmovies.1$original_release_date <- as.Date(RTmovies.1$original_release_date, format = "%Y-%m-%d")
+
+RTmovies.1 <- RTmovies.1 %>%
+  separate(directors, into = c("dir1"), sep = ", ", fill = "right") %>%
+  separate(actors, into = c("actr1", "actr2"), sep = ", ", fill = "right") %>% 
+  separate(genres, into = c("gen1"), sep = ", ", fill = "right") %>%
+  subset(original_release_date >= as.Date("1998-01-01"))
+
+# Merging variables from review dataset
+RTmovies.1 <- merge(RTmovies.1, 
+                    RTreviews[, c("rotten_tomatoes_link", "fresh_percent", 'review_count', 'top_critic_count')], 
+                    by = "rotten_tomatoes_link", 
+                    all.x = T)
+
+#Removing NA values
+RTmovies.1 <- RTmovies.1 %>%
+  distinct(rotten_tomatoes_link, .keep_all = TRUE)
+
+RTmovies.1 <- na.omit(RTmovies.1)
+```
+
+
+### Dataset Overview
+
+For this project, we analyzed data from a Kaggle dataset on Rotten Tomatoes movie reviews, which includes various features. To predict Rotten Tomatoes citric scores for films, we started by concentrating on the variables “runtime”, to assess whether longer or shorter films are reviewed more favorably, “content rating”, to evaluate how age-appropriate ratings impact critical reception, “production company”, to understand whether certain companies consistently produce critically acclaimed films, “top-critic count”, to examine if more reviews from top critics correlate with higher scores, and “genre”, to explore trends in scores across different genres. We thought that due to the variability for films in each of these variables, they would likely be significant to use in our final predictive model, as well as other potential variables. We originally thought that movie budgets would be an important variable to have for our model, however upon doing preliminary literature research, we found that these values are often incomplete or inconsistently reported. According to the Los Angeles Times “The problem that journalists have in reporting about movie budgets is that nearly everyone they ask about a movie’s budget tends to -- how do I put this nicely -- offer a whopper of an untruth.” (Gordon, 2009) Since we cannot guarentee the reliability of movie budgets, and it appears as though they are very subjective for public knowledge, we decided to not use movie budgets in our analysis. We did however, decide to filter our dataset to only contain movies released in the year 1998 and after, as Rotten Tomatoes was created in 1998. We also only viewed the critic reviews that were written up until the movies release date, in order to most effectively predict the Rotten Tomatoe score in comparison with Kalshi's betting model, which locks after the movie is released. To gain insights into the variables of runtime, content rating, production company, top-critic count, and genre, and their relationships with critic scores, we used various exploratory methods, including scatterplots, boxplots, bar plots, line graphs, and t-tests.
+
+### Exporation Insights
+
+#### Figure 1
+```{r}
+# linear model to get R-squared
+modelRun <- lm(tomatometer_rating ~ runtime, data = RTmovies.1)
+r_squared <- summary(modelRun)$r.squared
+
+# scatterplot
+ggplot(RTmovies.1, aes(x = runtime, y = tomatometer_rating)) +
+  geom_point(color = "darkblue", size = 3, alpha = 0.6) +  
+  geom_smooth(method = "lm", color = "red", se = FALSE, size = 1) +  
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = ", round(r_squared, 3)),
+    hjust = 1.1, vjust = -0.5,
+    size = 5,
+    color = "darkblue"
+  ) +
+  labs(
+    title = "Scatterplot of Runtime vs Tomatometer Rating",
+    x = "Runtime (minutes)",
+    y = "Tomatometer Rating (%)"
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+```
+
+Interpretation: 
+
+In Figure 1, there is a slight positive correlation between runtime and Tomatometer rating, meaning that, on average, longer movies tend to receive higher ratings. However, this relationship is very weak, as indicated by the low R^2 value of 0.017, which means that only 1.7% of the variation in Tomatometer scores can be explained by runtime. This suggests that while there is a small upward trend, runtime is not a strong predictor of a movie's rating. In summary, although the trendline shows a slight increase in Tomatometer rating with longer runtimes, the low R^2 value indicates that the relationship is weak, and runtime alone does not significantly impact critical reception.
+
+#### Figure 2
+```{r}
+# Fit a linear model to get R-squared
+modelCritic_count <- lm(tomatometer_rating ~ top_critic_count, data = RTmovies.1)
+r_squared <- summary(modelCritic_count)$r.squared
+
+# Create the scatterplot with trend line and R-squared annotation
+ggplot(RTmovies.1, aes(x = top_critic_count, y = tomatometer_rating)) +
+  geom_point(color = "darkblue", size = 3, alpha = 0.6) +  
+  geom_smooth(method = "lm", color = "red", se = FALSE, size = 1) +  
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = paste0("R² = ", round(r_squared, 3)),
+    hjust = 1.1, vjust = -0.5,
+    size = 5,
+    color = "darkblue"
+  ) +
+  labs(
+    title = "Scatterplot of Top Critic Review Counts vs Tomatometer Rating",
+    x = "Top Critic Reviews (count)",
+    y = "Tomatometer Rating (%)"
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+
+Interpretation: 
+
+Figure 2 shows that there is a slight positive correlation between the number of top critic reviews and Tomatometer ratings. Specifically, as the count of top critic reviews increases, the Tomatometer rating tends to slightly increase as well. However, the relationship remains very weak, as evidenced by the low R^2 value of 0.017. This means that only 1.7% of the variation in Tomatometer scores can be explained by the number of top critic reviews. The majority of movies are clustered near the lower end of the x-axis, indicating that most films have relatively few top critic reviews. In conclusion, while movies with more top critic reviews tend to have slightly higher Tomatometer ratings on average, the weak correlation suggests that the number of top critic reviews is not a strong predictor of critical reception. Therefore, the relationship is minimal, and other factors likely play a more substantial role in determining a film’s rating.
+
+
+#### Figure 3
+```{r}
+# mean and count tomatometer_rating for each content_rating
+summary_stats <- RTmovies.1 %>%
+  group_by(content_rating) %>%
+  summarise(
+    mean_rating = mean(tomatometer_rating, na.rm = TRUE),
+    count = n()
+  )
+
+#  y-axis limits
+y_max <- max(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+y_min <- min(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+
+# box plot with average and count labels
+ggplot(RTmovies.1, aes(x = content_rating, y = tomatometer_rating, fill = content_rating)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 2, alpha = 0.7) +
+  
+  #  mean rating labels for box plots
+  geom_text(
+    data = summary_stats,
+    aes(x = content_rating, y = mean_rating, label = paste0("Avg: ", round(mean_rating, 1))),
+    vjust = -0.5,  
+    color = "black",
+    size = 4
+  ) +
+  
+  # point representing the mean 
+  geom_point(
+    data = summary_stats,
+    aes(x = content_rating, y = mean_rating),
+    color = "blue",
+    size = 3
+  ) +
+  
+  # count labels for box plots
+  geom_text(
+    data = summary_stats,
+    aes(x = content_rating, y = y_min - (0.05 * (y_max - y_min)), label = paste0("Count: ", count)),
+    vjust = 1.5,  
+    color = "black",
+    size = 4
+  ) +
+  
+  labs(
+    title = "Distribution of Tomatometer Ratings by Content Rating",
+    x = "Content Rating",
+    y = "Tomatometer Rating (%)",
+    fill = "Content Rating"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "none"  
+  ) +
+  
+  # y-axis limits adjustment
+  scale_y_continuous(
+    limits = c(y_min - (0.1 * (y_max - y_min)), y_max + (0.1 * (y_max - y_min)))
+
+  )
+
+```
+
+Interpretation: 
+
+G (General Audience):
+- The average Tomatometer rating for G-rated movies is 62.7%.
+- The ratings are relatively spread out but concentrated between 40% and 80%.
+- There are 120 movies in this category, indicating a smaller sample size compared to PG-13 or R-rated movies.
+
+NC-17 (Adults Only):
+- NC-17 movies have the highest average rating of 68.2%, though the sample size is extremely small (12 movies).
+- This suggests caution when generalizing results for this category due to limited data.
+- The ratings appear consistent with fewer outliers.
+
+NR (Not Rated):
+- NR movies have an average Tomatometer rating of 71.4%, the highest of all categories.
+- This group also has a large number of movies (1,457), suggesting this rating covers a broad range of films.
+- There are notable outliers below 20%, indicating variability in ratings.
+
+PG (Parental Guidance):
+- PG movies have an average rating of 55.5%.
+- The ratings are fairly spread out, with the middle 50% of ratings centered between approximately 40% and 80%.
+- The count of PG movies is 686.
+
+PG-13 (Parents Strongly Cautioned):
+- PG-13 movies show the lowest average rating of 50.3%.
+- The ratings are widely distributed, with a significant portion of movies scoring below 50%.
+- This category also has a large sample size (1,768 movies).
+
+R (Restricted):
+- R-rated movies have an average rating of 56%, which is slightly higher than PG-13 movies.
+- Ratings span a wide range, with the middle 50% concentrated between approximately 40% and 80%.
+- The R category contains the largest sample size with 2,964 movies, providing a robust representation of Tomatometer ratings.
+
+Overall: 
+From the boxplot, it is evident that NR and NC-17 movies have the highest average Tomatometer ratings, although NC-17’s small sample size makes it less reliable. G-rated movies also perform well on average, while PG-13 movies have the lowest average ratings. R-rated movies, despite their large number, fall somewhere in the middle. Notably, NR movies show both a high average rating and substantial variability. These trends suggest that critical reception may vary depending on content ratings, with higher ratings generally associated with movies in rated NR and NC-17.
+
+#### Figure 4
+```{r}
+#  runtime categories
+RTmovies.1 <- RTmovies.1 %>%
+  mutate(
+    runtime_category = case_when(
+      runtime <= 90 ~ "<=90",
+      runtime > 90 & runtime <= 120 ~ "91-120",
+      runtime > 120 & runtime <= 150 ~ "121-150",
+      runtime > 150 & runtime <= 180 ~ "151-180",
+      runtime > 180 ~ "180+",
+      TRUE ~ "Unknown"  # Handle any unexpected cases
+    )
+  ) %>%
+  mutate(runtime_category = factor(runtime_category, levels = c("<=90", "91-120", "121-150", "151-180", "180+")))
+
+# mean tomatometer_rating and count for each runtime 
+summary_stats <- RTmovies.1 %>%
+  group_by(runtime_category) %>%
+  summarise(
+    mean_rating = mean(tomatometer_rating, na.rm = TRUE),
+    count = n()
+  )
+
+# create  box plot
+ggplot(RTmovies.1, aes(x = runtime_category, y = tomatometer_rating, fill = runtime_category)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 2, alpha = 0.7) +
+  
+  #  mean rating labels for box plots
+  geom_text(
+    data = summary_stats,
+    aes(x = runtime_category, y = mean_rating, label = paste0("Avg: ", round(mean_rating, 1))),
+    vjust = -0.5,  # Position above the mean point
+    color = "black",
+    size = 4
+  ) +
+  
+  # point representing the mean 
+  geom_point(
+    data = summary_stats,
+    aes(x = runtime_category, y = mean_rating),
+    color = "blue",
+    size = 3
+  ) +
+  
+  labs(
+    title = "Distribution of Tomatometer Ratings by Movie Runtime",
+    x = "Runtime",
+    y = "Tomatometer Rating (%)",
+    fill = "Runtime"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "none"  
+  ) +
+  
+  #  y-axis limits adjustment
+  scale_y_continuous(
+    expand = expansion(mult = c(0.05, 0.1))  # Adds 5% below and 10% above the data range
+  )
+
+```
+
+Interpretation: 
+
+Shorter Movies (<=90 and 91-120 minutes):
+- Movies with runtimes of <=90 minutes have an average rating of 56.8%, while those in the 91-120 range average 56.1%.
+- These two groups show similar Tomatometer scores, with medians below 60%. Both distributions are relatively spread out, with scores ranging from 0 to close to 100%.
+
+Medium-Length Movies (121-150 minutes):
+- Movies in this runtime category show an improvement, with an average Tomatometer rating of 66.7%.
+- The median also shifts upward compared to shorter movies, and the interquartile range (middle 50% of ratings) is concentrated in higher scores.
+
+Longer Movies (151-180 minutes):
+- Movies in this runtime range have an even higher average rating of 75.1%, with the median well above 70%.
+- The distribution is narrower, indicating that longer movies generally receive better and more consistent Tomatometer scores.
+
+Very Long Movies (180+ minutes):
+- The highest average Tomatometer rating is observed for movies longer than 180 minutes, with an average of 80.2%.
+- These movies tend to have a concentrated distribution of high ratings, with few low scores and minimal variability.
+- However, the variability does seem to be extreme when it does happen, as the average is affected by a few extreme outliers of low critic scores, and the median score, as a result, is higher than the average.
+
+Overall:
+There is a clear upward trend in Tomatometer ratings as movie runtime increases. Shorter movies (<=120 minutes) tend to receive lower and more variable ratings, while longer movies (151+ minutes) perform better on average, with higher ratings and more consistency. This suggests that movies with longer runtimes might provide certain film qualities that are more favorably received by critics, contributing to higher Tomatometer scores.
+
+#### Figure 5
+```{r}
+RTmovies.1$production_company <- as.factor(RTmovies.1$production_company)
+
+# remove rows where production_company = NA
+RTmovies.1 <- RTmovies.1 %>%
+  filter(!is.na(production_company))
+
+
+# filter top 10 production companies by number of movies
+
+top_n_companies <- RTmovies.1 %>%
+  count(production_company, sort = TRUE) %>%
+  top_n(10, n) %>%
+  pull(production_company)
+
+RTmovies.2 <- RTmovies.1 %>%
+  filter(production_company %in% top_n_companies)
+
+# mean tomatometer_rating for each production_company
+summary_stats <- RTmovies.2 %>%
+  group_by(production_company) %>%
+  summarise(
+    mean_rating = mean(tomatometer_rating, na.rm = TRUE),
+    count = n()
+  ) %>%
+  ungroup()
+
+# box plot with average rating 
+ggplot(RTmovies.2, aes(x = production_company, y = tomatometer_rating, fill = production_company)) +
+  geom_boxplot(
+    outlier.color = "red",
+    outlier.shape = 16,
+    outlier.size = 2,
+    alpha = 0.7
+  ) +
+  
+  # rating labels 
+  geom_text(
+    data = summary_stats,
+    aes(
+      x = production_company,
+      y = mean_rating,
+      label = paste0("Avg: ", round(mean_rating, 1))
+    ),
+    vjust = -0.5,  
+    color = "black",
+    size = 3
+  ) +
+  
+  # point for the mean 
+  geom_point(
+    data = summary_stats,
+    aes(x = production_company, y = mean_rating),
+    color = "blue",
+    size = 2
+  ) +
+  
+  # labels, title
+  labs(
+    title = "Distribution of Tomatometer Ratings by Production Company",
+    x = "Production Company",
+    y = "Tomatometer Rating (%)",
+    fill = "Production Company"
+  ) +
+  
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 12),
+    legend.position = "none"  
+  ) +
+  
+  #  y-axis limits 
+  scale_y_continuous(
+    expand = expansion(mult = c(0.05, 0.1))  # Adds 5% below and 10% above the data range
+  )
+
+```
+
+Interpretation: 
+
+Top Performing Production Companies:
+- Sony Pictures Classics has the highest average Tomatometer rating of 73.1%, with its ratings distributed in the upper range and a higher median compared to other companies.
+- Walt Disney Pictures also performs well, with an average rating of 63.8%. Its ratings are tightly distributed in the upper half of the scale.
+- IFC Films and Magnolia Pictures share similar average ratings of 62.9%, indicating consistent critical success.
+
+Mid-Tier Companies:
+- Focus Features has a solid average of 66.7%, showing strong performance overall with a wide range of ratings.
+- Universal Pictures achieves a moderate average of 52.2%, though its distribution shows a wide spread, indicating variability in critical reception.
+
+Lower Performing Production Companies:
+- 20th Century Fox has the lowest average Tomatometer rating at 45.9%, with a relatively lower median and many scores spread in the lower range.
+- Sony Pictures and Warner Bros. Pictures exhibit average ratings of 47.6% and 49.8%, respectively, both showing broad variability and lower central tendencies.
+
+Overall:
+Production companies differ significantly in their critical success as measured by Tomatometer ratings. Sony Pictures Classics and Walt Disney Pictures stand out as top performers with consistently high ratings, while 20th Century Fox lags behind. Companies like IFC Films and Focus Features also achieve strong average scores, indicating favorable reception for a majority of their productions. This visualization highlights how production company affiliation can correlate with a movie’s critical reception.
+
+#### Figure 6
+```{r}
+#  tomatometer_meter_top_critics_count to  bins
+num_categories <- 4  # Num categories
+
+RTmovies.1 <- RTmovies.1 %>%
+  mutate(
+    top_critic_count_category = cut(
+      top_critic_count,
+      breaks = quantile(top_critic_count, probs = seq(0, 1, length.out = num_categories + 1), na.rm = TRUE),
+      include.lowest = TRUE,
+      labels = c("Low", "Medium-Low", "Medium-High", "High")
+    )
+  )
+
+summary_stats <- RTmovies.1 %>%
+  group_by(top_critic_count_category) %>%
+  summarise(mean_rating = mean(tomatometer_rating, na.rm = TRUE)) %>%
+  ungroup()
+
+
+#  box plot
+boxplot <- ggplot(RTmovies.1, aes(x = top_critic_count_category, y = tomatometer_rating, fill = top_critic_count_category)) +
+  geom_boxplot(
+    outlier.color = "red",
+    outlier.shape = 16,
+    outlier.size = 2,
+    alpha = 0.7
+  ) +
+  
+  # mean rating labels for box plots
+  geom_text(
+    data = summary_stats,
+    aes(
+      x = top_critic_count_category,
+      y = mean_rating,
+      label = paste0("Avg: ", round(mean_rating, 1))
+    ),
+    vjust = -0.5,  # Position the label slightly above the mean point
+    color = "black",
+    size = 4
+  ) +
+  
+  # point representing the mean rating
+  geom_point(
+    data = summary_stats,
+    aes(x = top_critic_count_category, y = mean_rating),
+    color = "blue",
+    size = 3
+  ) +
+  
+  # labels and title
+  labs(
+    title = "Distribution of Tomatometer Ratings by Top Critic Review Count",
+    x = "Top Critic Review Count Category",
+    y = "Tomatometer Rating (%)",
+    fill = "Top Critic Review Count"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.position = "none"  
+  ) +
+
+  scale_y_continuous(
+    expand = expansion(mult = c(0.05, 0.1))  
+  )
+
+# display plot
+print(boxplot)
+
+```
+
+Interpretation: 
+
+Low Review Count Category:
+- Movies with a low number of top critic reviews have an average Tomatometer rating of 54.7%.
+- The median is below 60%, and the ratings exhibit a wide range from close to 0% to nearly 100%, indicating significant variability in critical reception.
+
+Medium-Low and Medium-High Categories:
+- The Medium-Low category shows an average rating of 57.1%, while the Medium-High category has a slightly higher average of 57.5%.
+- Both categories share similar distributions with medians just below 60%. The variability remains high, but the overall averages improve slightly compared to the Low category.
+
+High Review Count Category:
+- Movies with a high number of top critic reviews achieve the highest average Tomatometer rating of 62.6%.
+- The median rating is noticeably higher, and the overall distribution is more consistent, with ratings clustering toward the upper end of the scale.
+
+Overall:
+There is a positive relationship between the number of top critic reviews and the Tomatometer rating. Movies with more top critic reviews tend to receive higher Tomatometer ratings on average. This could indicate that movies widely reviewed by top critics are generally of higher quality or more favorably received by critics. In contrast, movies with fewer reviews exhibit greater variability in ratings, suggesting that they may not consistently appeal to critics or are reviewed less frequently due to lower visibility or quality.
+
+#### Figure 7
+```{r}
+mean_ratings <- RTmovies.1 %>% 
+  filter(!is.na(gen1), gen1 != "Television") %>%   # Filter out NA and "Television"
+  group_by(gen1) %>% 
+  summarize(mean_rating = mean(tomatometer_rating, na.rm = TRUE))
+
+ggplot(
+  RTmovies.1 %>% filter(!is.na(gen1), gen1 != "Television"),  # Filter data here as well
+  aes(x = gen1, y = tomatometer_rating)
+) +
+  geom_boxplot(fill = "darkblue", color = "black") +  
+  geom_text(
+    data = mean_ratings,
+    aes(x = gen1, y = mean_rating, label = round(mean_rating, 1)),
+    vjust = -0.5,
+    color = "red",
+    size = 3.5
+  ) +  
+  labs(
+    title = "Critic Scores by Movie Genre",
+    x = "Genre",
+    y = "Critic Score (Tomatometer Rating)"
+  ) +
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  
+    axis.text.x = element_text(angle = 45, hjust = 1)  
+  )
+
+```
+
+Interpretation: 
+
+Highest Performing Genres:
+- Documentary has the highest average critic score of 79.1, with ratings clustered in the upper range. The boxplot reflects consistently strong scores with relatively few outliers.
+- Cult Movies follow closely with an average score of 71.7, showing high median and consistent performance.
+- Animation (average 64.2) and Art House & International (average 71.3) also receive strong critical acclaim, with tight distributions and upper median scores.
+
+Moderately Performing Genres:
+- Drama (average 59.6) and Kids & Family (average 61.4) show moderate critical reception, with a wider range of ratings but a notable central tendency toward higher scores.
+- Western (average 67) and Science Fiction & Fantasy (average 62.6) perform moderately well, with critic scores concentrated in the upper middle range.
+
+Lowest Performing Genres:
+- Romance has the lowest average critic score of 36.1, with a large portion of its scores in the lower range.
+- Horror (average 47.1) and Mystery & Suspense (average 43.2) also perform poorly, showing lower medians and wider variability, reflecting mixed critical reception.
+- Action & Adventure and Comedy receive lower averages (51.8 and 51.3, respectively), with ratings spread broadly across the scale, indicating inconsistent critical performance.
+
+Overall:
+Critic scores vary significantly across movie genres. Genres such as Documentary, Art House & International, and Cult Movies receive the highest average scores, reflecting strong critical acclaim. In contrast, genres like Romance, Horror, and Mystery & Suspense tend to underperform, with lower average scores and greater variability. This analysis underscores that certain genres are more consistently well-received by critics, while others face more mixed or less favorable reception.
+
+```{r}
+# Separate years, months, and days in the original release date column
+RTmovies.1 <- RTmovies.1 %>%
+  separate(
+    col = original_release_date,
+    into = c("year", "month", "day"),
+    sep = "-",
+    remove = FALSE
+  )
+```
+
+
+#### Figure 8
+```{r}
+# average critic scores per month, excluding NA months
+avg_critic_scores <- RTmovies.1 %>%
+  filter(!is.na(month)) %>%  # Exclude rows with NA in 'month'
+  group_by(month) %>%
+  summarize(
+    average_rating = mean(tomatometer_rating, na.rm = TRUE),
+    movie_count = n()
+  ) %>%
+  ungroup()
+
+# create the bar graph without the NA column
+ggplot(avg_critic_scores, aes(x = month, y = average_rating)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  geom_text(aes(label = round(average_rating, 1)),
+            vjust = -0.5,
+            size = 3.5,
+            color = "black") +
+  labs(
+    title = "Average Critic Review Scores by Month",
+    x = "Month",
+    y = "Average Tomatometer Rating"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  ylim(0, max(avg_critic_scores$average_rating) + 10)
+
+```
+
+Interpretation: 
+
+According to The New Yorker, there is seasonality in film releases, as studios tend to release blockbuster movies, and potential oscar winning ones, “over big holidays; when the weather’s warm; and when kids are out of school”, as they have found that audiences appetite for seeing films varies throughout the year. (Surowiecki, 2015). Therefore we think that there can be evidence of seasonality with critic review scores as well.
+
+Lowest Scoring Months:
+- January (51.0) and February (52.5) have the lowest average critic scores, indicating that movies released in these months tend to receive less favorable reviews.
+- These months may coincide with the release of lower-budget or less-promoted films.
+
+Highest Scoring Month:
+- November stands out as the highest-performing month, with an average Tomatometer rating of 63.2.
+- This aligns with awards season, where critically acclaimed films are often released to maximize attention for nominations.
+
+Middle-Performing Months:
+- March (57.6) and April (56.1) show moderate scores, with averages improving relative to the early months of the year.
+- June (60.7) and July (59.7) have slightly higher ratings, which could align with the release of major summer blockbusters or well-received films.
+
+Other Notable Months:
+- October (59.8) and December (59.4) maintain high average scores, likely benefiting from a mix of holiday-season releases and pre-awards-season films.
+- August (56.5) and September (56.9) have slightly lower scores compared to surrounding months, indicating variability in quality.
+
+Overall:
+The chart reveals a seasonal pattern in critic review scores. Movies released in January and February tend to have the lowest average scores, suggesting that this period is often associated with weaker critical reception. In contrast, November consistently produces the highest average ratings, coinciding with the awards season when studios release their strongest films to gain critical acclaim. Other months, such as June and December, also show relatively strong performance, reflecting the impact of both summer blockbusters and holiday releases. This pattern suggests a strategic release schedule by studios, with higher-quality films concentrated in specific months.
+
+#### Figure 9
+```{r}
+### 4. Lineplot for average critic score through the years
+avg_critic_scores2 <- RTmovies.1 %>%
+  filter(!is.na(year)) %>%  
+  group_by(year) %>%
+  summarize(
+    average_rating = mean(tomatometer_rating, na.rm = TRUE),
+    movie_count = n()
+  ) %>%
+  ungroup()
+#  year to numeric
+avg_critic_scores2$year <- as.numeric(avg_critic_scores2$year)
+
+
+ggplot(avg_critic_scores2, aes(x = year, y = average_rating)) + 
+  geom_line(color = "darkblue", size = 1) +        
+  labs(
+    title = "Average Critic Review Scores Over Time",
+    x = "Year",
+    y = "Average Tomatometer Rating"
+  ) +
+  theme_minimal() +                                   
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),  
+    axis.text.x = element_text(angle = 45, hjust = 1)                
+  ) +
+  ylim(0, max(avg_critic_scores2$average_rating, na.rm = TRUE) + 10)
+
+```
+
+Interpretation: 
+
+Early Years (1998–2000):
+- There is a noticeable fluctuation at the start, with critic scores rising steeply around 1999 to approximately 55 before dropping back to around 50 in subsequent years.
+- Starting around 2000 through 2009, average critic scores remained relatively stable, fluctuating slightly between 50 and 55, and the overall trend during this period was relatively flat.
+
+Upward Trend (2010–2020):
+- Starting around 2010, there is a clear upward trend in average critic scores.
+- Between 2010 and 2015, scores steadily increased from approximately 55 to 60, though a minor dip is observed around 2014.
+- Post-2015, the scores continued to rise gradually, reaching their highest point near 2020, at around 65.
+
+Overall:
+The chart demonstrates a general improvement in average critic review scores over time, with a significant upward shift beginning around 2010. The scores have steadily climbed, indicating either improving quality in movies, evolving critical standards, or broader acceptance of films in recent years.
+
+#### Figure 10
+```{r}
+avg_top_critic_scores <- RTmovies.1 %>%
+  filter(!is.na(year)) %>% 
+  group_by(year, top_critic_count) %>%
+  summarize(
+    average_rating = mean(tomatometer_rating, na.rm = TRUE),
+    movie_count = n()
+  ) %>%
+  ungroup()
+
+# as numeric
+avg_top_critic_scores$year <- as.numeric(avg_top_critic_scores$year)
+
+#  plot
+ggplot(avg_top_critic_scores, aes(x = year, y = top_critic_count)) +
+  stat_summary(fun = mean, geom = "line", color = "darkblue", size = 1) +
+  labs(
+    title = "Average Top Tomatometer Critic Reviews Per Film Over Time",
+    x = "Year",
+    y = "Average Top Critic Review Count"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+Interpretation: 
+
+Initial Surge (Late 1990s to Early 2000s):
+- Before 2000, the average number of top critic reviews per film was minimal, hovering near zero.
+- Around 2000, there was a significant and abrupt increase, reaching nearly 25 reviews per film.
+
+Fluctuations in the 2000s:
+- From 2000 to 2010, the average review count exhibited moderate fluctuations, moving between 15 and 25 reviews per film.
+Peak Period (2010–2015):
+- A steady upward trend began around 2010, with average top critic reviews per film rising sharply.
+- By 2015, the review count reached its peak at approximately 35 reviews per film, reflecting the highest level of critical coverage during this timeframe.
+
+Recent Decline (Post-2015):
+- After peaking in 2015, the average number of reviews began to decline gradually.
+- By 2020, the count dropped sharply to around 20 reviews per film, marking a notable decrease compared to previous years.
+
+Overall:
+The chart shows a clear trend of increasing critical coverage for films, particularly from the early 2000s to the mid-2010s, when the average number of top critic reviews per film reached its peak. However, a noticeable decline occurred after 2015, with the downward trend accelerating into 2020. This recent decrease could reflect changes in the film industry, such as shifting media consumption patterns, the rise of streaming platforms, or reduced participation of critics in formal reviews during certain years.
+
+#### Figure 11 
+```{r}
+# average tomatometer_rating per year and genre
+avg_scores_rating <- RTmovies.1 %>%
+  group_by(year, content_rating) %>%
+  summarise(avg_tomatometer = mean(tomatometer_rating, na.rm = TRUE)) %>%
+  ungroup()
+
+# year to numeric
+avg_scores_rating$year <- as.numeric(avg_scores_rating$year)
+
+
+p <- ggplot(avg_scores_rating, aes(x = year, y = avg_tomatometer, color = content_rating, group = content_rating)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Average Tomatometer Rating Over Years by Content Rating",
+    x = "Year",
+    y = "Average Tomatometer Rating",
+    color = "Content Rating"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  scale_x_continuous(
+    breaks = seq(
+      from = floor(min(avg_scores_rating$year, na.rm = TRUE)),
+      to = ceiling(max(avg_scores_rating$year, na.rm = TRUE)),
+      by = 5 # Ensure breaks are set every 5 years
+    ),
+    labels = scales::number_format(accuracy = 1) # Ensure proper formatting without scientific notation
+  )
+interactive_plot <- ggplotly(p) 
+
+
+interactive_plot <- interactive_plot %>%
+  layout(
+    xaxis = list(
+      tickmode = "linear",                       
+      tick0 = min(avg_scores_rating$year, na.rm = TRUE), 
+      dtick = 5,                                
+      tickformat = "d"                            
+    ),
+    legend = list(
+      title = list(text = "Content Rating")      
+    )
+  )
+
+# trace names
+trace_names <- sapply(interactive_plot$x$data, function(trace) trace$name)
+
+# dropdown buttons
+content_ratings <- unique(avg_scores_rating$content_rating)
+buttons <- list()
+
+for (i in seq_along(content_ratings)) {
+  current_rating <- content_ratings[i]
+  trace_indices <- which(trace_names == current_rating)
+
+  visibility <- rep(FALSE, length(trace_names))
+  visibility[trace_indices] <- TRUE
+
+  buttons[[i]] <- list(
+    method = "update",
+    args = list(
+      list(visible = visibility),
+      list(title = paste("Average Tomatometer Rating Over Years -", current_rating))
+    ),
+    label = current_rating
+  )
+}
+
+#  'all' button
+buttons <- c(
+  list(
+    list(
+      method = "update",
+      args = list(
+        list(visible = rep(TRUE, length(trace_names))),
+        list(title = "Average Tomatometer Rating Over Years by Content Rating")
+      ),
+      label = "All"
+    )
+  ),
+  buttons
+)
+
+
+interactive_plot <- interactive_plot %>%
+  layout(
+    updatemenus = list(
+      list(
+        active = 0,
+        buttons = buttons,
+        x = 0.1,
+        y = 1.15,
+        xanchor = 'left',
+        yanchor = 'top'
+      )
+    )
+  )
+
+
+interactive_plot
+
+```
+
+Interpretation: 
+
+Trends Across Content Ratings:
+- G-rated movies (red line): Show a steady upward trend over time, starting around 30% in the late 1990s and rising significantly to almost 95% by the end of the period. This suggests that G-rated movies have increasingly received favorable critical reviews.
+- NC-17 movies (brown line): Initially performed well in the late 1990s, around 80% on average, but have experienced erratic and sharp declines in later years, with extreme drops around 2013, likely due to very few movies being released in this category.
+- NR movies (green line): These movies have maintained relatively high and stable scores, fluctuating between 70-80% with minimal downward trends.
+- PG movies (teal line): Exhibit a relatively consistent upward trend, improving from scores in the mid-40s to the low-60s in recent years, indicating gradual improvement in critical reception.
+- PG-13 movies (blue line): These movies have shown greater volatility, with ratings oscillating between 40% and 60% for much of the time period. However, in recent years, there has been a modest upward trend.
+- R-rated movies (pink line): Ratings for R-rated movies have remained fairly stable, hovering between 50-60%, with gradual improvement toward the end of the period.
+
+Overall:
+The chart highlights clear differences in the average critical reception of movies across content ratings over time. G-rated movies have shown the most dramatic improvement, achieving the highest average scores in recent years. In contrast, NC-17 movies display significant inconsistency, while PG and PG-13 movies show modest but steady improvement. NR-rated movies continue to perform well, maintaining consistently high ratings. Overall, the trends suggest that critical reception has improved across multiple content categories, particularly for family-friendly films (G and PG).
+
+#### Figure 12
+```{r}
+# average tomatometer_rating per year and genre
+avg_scores_genre <- RTmovies.1 %>%
+  group_by(year, gen1) %>%
+  summarise(avg_tomatometer = mean(tomatometer_rating, na.rm = TRUE)) %>%
+  ungroup()
+
+#  year column to numeric
+avg_scores_genre$year <- as.numeric(avg_scores_genre$year)
+
+# ggplot for genres
+p_genre <- ggplot(avg_scores_genre, aes(x = year, y = avg_tomatometer, color = gen1, group = gen1)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Average Tomatometer Rating Over Years by Genre",
+    x = "Year",
+    y = "Average Tomatometer Rating",
+    color = "Genre"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  )
+
+# ggplot to an interactive plotly object
+interactive_plot_genre <- ggplotly(p_genre)
+
+# extract trace names to see which traces correspond to which genres
+trace_names <- sapply(interactive_plot_genre$x$data, function(trace) trace$name)
+
+# unique genres
+genres <- unique(avg_scores_genre$gen1)
+
+# buttons for each genre
+buttons_genre <- list()
+
+# traces
+for (g in genres) {
+  trace_indices <- which(trace_names == g)
+  visibility <- rep(FALSE, length(trace_names))
+  visibility[trace_indices] <- TRUE
+
+  # button for the current genre
+  buttons_genre[[length(buttons_genre) + 1]] <- list(
+    method = "update",
+    args = list(
+      list(visible = visibility),
+      list(title = paste("Average Tomatometer Rating in", g, "Genre"))
+    ),
+    label = g
+  )
+}
+
+# "all" button to show all genres
+buttons_genre <- c(
+  list(
+    list(
+      method = "update",
+      args = list(
+        list(visible = rep(TRUE, length(trace_names))),
+        list(title = "Average Tomatometer Rating Over Years by Genre")
+      ),
+      label = "All"
+    )
+  ),
+  buttons_genre
+)
+
+# dropdown menu, plot layout with corrected tick marks
+interactive_plot_genre <- interactive_plot_genre %>%
+  layout(
+    updatemenus = list(
+      list(
+        active = 0, 
+        buttons = buttons_genre,
+        x = 1.15,    
+        y = 1,      
+        xanchor = 'left',
+        yanchor = 'top'
+      )
+    ),
+    legend = list(
+      title = list(text = 'Genre')
+    ),
+    xaxis = list(
+      tickmode = "linear",       
+      tick0 = min(avg_scores_genre$year, na.rm = TRUE), 
+      dtick = 5,               
+      tickformat = ".0f"    
+    )
+  )
+
+# plot w/ dropdown
+interactive_plot_genre
+
+```
+
+Interpretation: 
+
+Consistently High-Performing Genres:
+- Cult Movies (green line) and Documentary genres maintain strong average scores, frequently hovering around 75% to 85%. These genres show consistent critical success over the years.
+- Art House & International films (olive line) also perform well, with generally high average ratings, despite occasional dips.
+Genres with Volatile Trends:
+- Romance (pink line) exhibits significant variability, with sharp declines around 2008–2015, where scores dip as low as 25%, followed by a noticeable recovery toward the end of the period. This indicates inconsistent critical reception.
+- Musical & Performing Arts (light blue line) also shows considerable volatility, with scores fluctuating widely, suggesting varying quality or critical reception across years.
+
+Steady Middle-Tier Genres:
+- Animation (orange line) demonstrates a steady upward trend over time, improving from moderate ratings around 50% in the early 2000s to consistently higher scores in recent years.
+- Kids & Family (blue line) and Drama (teal line) exhibit relatively stable trends, maintaining average ratings around the mid-50s to 60s range.
+Lower Performing Genres:
+- Horror (cyan line) remains among the lower-performing genres, with ratings often fluctuating below 50% but showing occasional peaks.
+- Mystery & Suspense (purple line) also shows poor performance, particularly in the early years, with several dips to very low ratings (below 30%).
+
+Overall:
+The chart highlights clear disparities in critical reception among movie genres over time. While genres like Documentary and Cult Movies consistently receive high average ratings, others, like Romance and Horror, face greater variability and lower critical acclaim. The overall trends suggest improvements in certain family-oriented genres such as Animation and Kids & Family, while some genres remain less critically favored and inconsistent, such as Romance, Horror, and Musical & Performing Arts.
+
+#### Figure 13
+```{r}
+# top ten prod companies by num movies
+top_companies <- RTmovies.1 %>%
+  group_by(production_company) %>%
+  summarise(movie_count = n()) %>%
+  arrange(desc(movie_count)) %>%
+  slice_head(n = 10) %>%
+  pull(production_company)
+
+# top 10 companies avg rating by yr
+filtered_data <- RTmovies.1 %>%
+  filter(production_company %in% top_companies) %>%
+  group_by(production_company, year) %>%
+  summarise(avg_tomatometer = mean(tomatometer_rating, na.rm = TRUE)) %>%
+  ungroup()
+
+# plot w/ dropdown menu
+p <- plot_ly()
+
+# trace for each production company
+for(company in top_companies){
+  company_data <- filtered_data %>% filter(production_company == company)
+  
+  p <- p %>%
+    add_trace(
+      x = company_data$year,
+      y = company_data$avg_tomatometer,
+      type = 'scatter',
+      mode = 'lines+markers',
+      name = company,
+      visible = ifelse(company == top_companies[1], TRUE, FALSE)
+    )
+}
+
+# dropdown buttons
+dropdown_buttons <- list(
+  list(
+    method = "update",
+    args = list(
+      list(visible = sapply(top_companies, function(x) x == top_companies[1])),
+      list(title = paste("Average Tomatometer Rating -", top_companies[1]))
+    ),
+    label = top_companies[1]
+  )
+)
+
+for(i in 2:length(top_companies)){
+  button <- list(
+    method = "update",
+    args = list(
+      list(visible = sapply(top_companies, function(x) x == top_companies[i])),
+      list(title = paste("Average Tomatometer Rating -", top_companies[i]))
+    ),
+    label = top_companies[i]
+  )
+  dropdown_buttons <- append(dropdown_buttons, list(button))
+}
+
+# plot layout
+p <- p %>%
+  layout(
+    title = paste("Average Tomatometer Rating -", top_companies[1]),
+    xaxis = list(
+      title = "Year",
+      tickmode = "linear",         
+      tick0 = min(filtered_data$year, na.rm = TRUE),  
+      dtick = 5,                   
+      tickformat = ".0f"          
+    ),
+    yaxis = list(title = "Average Tomatometer Rating"),
+    updatemenus = list(
+      list(
+        active = 0,
+        buttons = dropdown_buttons,
+        x = 1.15,
+        y = 0.5
+      )
+    )
+  )
+
+
+p
+
+
+```
+
+Interpretation: 
+
+Trends Across Production Companies:
+- Lots of fluctuations, but this can be expected as studios can have up and down years based on the films that they release in a specific year.
+- Top Performers: Sony Pictures Classics, IFC Films, and Focus Features consistently receive the highest average Tomatometer ratings, reflecting their ability to produce critically acclaimed films.
+- Improving Trends: Warner Bros., Universal Pictures, and Focus Features show significant improvement in ratings toward the later years (2015–2020), suggesting an upward trend in critical reception.
+- Highly Volatile Studios: Studios like 20th Century Fox, Paramount Pictures, and Sony Pictures show significant fluctuations, indicating inconsistent critical success.
+- Walt Disney Pictures: Disney exhibits dramatic highs and lows, reflecting both successes and challenges in maintaining consistent critical reception, as we originally theorized.
+
+Overall:
+The trends across these major production companies highlight differences in critical performance over time. Studios such as Sony Pictures Classics and IFC Films maintain high and stable ratings, while others, like Warner Bros. Pictures and Universal Pictures, demonstrate notable upward momentum in recent years. However, variability remains a common theme for most studios overall.
+
+#### Table 1
+```{r}
+# to char
+RTmovies.1$gen1 <- as.character(RTmovies.1$gen1)
+
+# to ddf
+test_results <- data.frame(
+  Genre = character(),
+  Mean = numeric(),
+  t_statistic = numeric(),
+  df = numeric(),
+  p_value = numeric(),
+  CI_lower = numeric(),
+  CI_upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# one-sample t-test
+for (genre in unique(RTmovies.1$gen1)) {
+  genre_data <- RTmovies.1 %>% # data subset for the current genre
+    filter(gen1 == genre) %>%
+    select(tomatometer_rating) %>%
+    drop_na()  # drop NA 
+
+  # mean for the genre
+  mean_val <- mean(genre_data$tomatometer_rating, na.rm = TRUE)
+  mean_ovr <- mean(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+
+  # one-sample t-test vs  overall mean
+  t_test <- t.test(
+    genre_data$tomatometer_rating,
+    mu = mean(mean_ovr),  
+    conf.level = 0.95
+  )
+
+  # results to the test_results dataframe
+  test_results <- rbind(
+    test_results,
+    data.frame(
+      Genre = genre,
+      Mean = mean_val,
+      t_statistic = t_test$statistic,
+      df = t_test$parameter,
+      p_value = t_test$p.value,
+      CI_lower = t_test$conf.int[1],
+      CI_upper = t_test$conf.int[2]
+    )
+  )
+}
+
+# results table
+kable(test_results)
+
+```
+
+Interpretation: 
+
+The t-test analysis reveals significant differences in critical reception across movie genres, as indicated by their p-values. Documentaries, Art House & International films, and Animation show strong statistical evidence of higher-than-average critic scores, with p-values well below 0.05. In contrast, Horror and Romance genres are rated significantly worse, with higher p-values confirming their underperformance. Action & Adventure also exhibits statistically significant underperformance, despite its broad appeal.
+
+Genres such as Kids & Family and Science Fiction & Fantasy achieve moderately high mean scores, but their p-values indicate no statistically significant difference from the the average value. Similarly, Classics and Musical & Performing Arts do not show significant deviations. These findings emphasize the critical disparity across genres, with statistically robust support for the superior performance of documentaries and art-focused genres and the underperformance of others like Horror and Romance.
+
+#### Table 2
+```{r}
+# overall mean tomatometer rating
+overall_mean <- mean(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+
+# one-sample t-tests for each sufficient content rating
+# initialize a dataframe to store results
+t_test_results_content <- data.frame(
+  Content_Rating = character(),
+  Mean = numeric(),
+  t_statistic = numeric(),
+  df = numeric(),
+  p_value = numeric(),
+  CI_lower = numeric(),
+  CI_upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# content_rating to character column
+RTmovies.1$content_rating <- as.character(RTmovies.1$content_rating)
+
+#  one-sample t-test
+for (content in unique(RTmovies.1$content_rating)) {
+  
+  # subset data for the current content rating
+  content_data <- RTmovies.1 %>%
+    filter(content_rating == content) %>%
+    select(tomatometer_rating) %>%
+    drop_na()  # drop NA
+  
+  #  mean for content rating
+  mean_val <- mean(content_data$tomatometer_rating, na.rm = TRUE)
+  
+  # one-sample t-test vs  overall mean
+  t_test <- tryCatch(
+    t.test(content_data$tomatometer_rating, mu = overall_mean)
+  )
+  
+  # skip to next iteration if NA 
+  if (is.null(t_test)) {
+    next
+  }
+  
+  # extract data
+  t_stat <- as.numeric(t_test$statistic)
+  df_val <- as.numeric(t_test$parameter)
+  p_val <- as.numeric(t_test$p.value)
+  ci_lower <- as.numeric(t_test$conf.int[1])
+  ci_upper <- as.numeric(t_test$conf.int[2])
+  
+  # results to df
+  t_test_results_content <- rbind(
+    t_test_results_content,
+    data.frame(
+      Content_Rating = content,
+      Mean = mean_val,
+      t_statistic = t_stat,
+      df = df_val,
+      p_value = p_val,
+      CI_lower = ci_lower,
+      CI_upper = ci_upper,
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+kable(t_test_results_content)
+
+```
+
+Interpretation: 
+
+The t-test analysis of movie content ratings reveals significant disparities in critical reception, driven by p-values and statistical significance. NR films achieve the highest mean score of 71.42, with a highly significant p-value indicating strong critical reception. G-rated films also demonstrate statistically significant results, with a mean score of 62.73, further highlighting their favorable reception. R-rated and PG-rated films, with mean scores of 55.98 and 55.50, respectively, show statistically significant evidence of positive reception, though their scores are less notable compared to NR and G-rated films.
+
+In contrast, PG-13 films, with a mean score of 50.28, display statistically significant evidence of underperformance, reflecting weaker critical reception. NC-17 films, despite achieving a high mean score of 68.17, lack statistical significance due to a small sample size and wide confidence interval, making their results less reliable for interpretation.
+
+This analysis underscores the influence of content ratings on critical success, with statistically significant findings emphasizing the strong reception of NR and G-rated films and the notable underperformance of PG-13 movies.
+
+#### Table 3
+```{r}
+# mean tomatometer rating
+overall_mean <- mean(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+
+# number of observations per production company
+production_counts <- RTmovies.1 %>%
+  group_by(production_company) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+
+# top 10 production companies by num titles
+top_n <- 10  
+top_production_companies <- production_counts %>%
+  top_n(n = top_n, wt = count) %>%
+  arrange(desc(count)) %>%
+  pull(production_company)
+
+# one-sample t-tests for each top production company
+t_test_results_production <- data.frame(
+  Production_Company = character(),
+  Mean = numeric(),
+  t_statistic = numeric(),
+  df = numeric(),
+  p_value = numeric(),
+  CI_lower = numeric(),
+  CI_upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# production_company to char
+RTmovies.1$production_company <- as.character(RTmovies.1$production_company)
+
+# one-sample t-test
+for (company in top_production_companies) {
+  
+  # subset
+  company_data <- RTmovies.1 %>%
+    filter(production_company == company) %>%
+    select(tomatometer_rating) %>%
+    drop_na()  # drop NA
+
+  
+  # mean for the production company
+  mean_val <- mean(company_data$tomatometer_rating, na.rm = TRUE)
+  
+  #one-sample t-test vs overall mean
+  t_test <- tryCatch(
+    t.test(company_data$tomatometer_rating, mu = overall_mean)
+  )
+  
+  #  t_test skip null error
+  if (is.null(t_test)) {
+    next
+  }
+  
+  # extract data
+  t_stat <- as.numeric(t_test$statistic)
+  df_val <- as.numeric(t_test$parameter)
+  p_val <- as.numeric(t_test$p.value)
+  ci_lower <- as.numeric(t_test$conf.int[1])
+  ci_upper <- as.numeric(t_test$conf.int[2])
+  
+  # results to dataframe
+  t_test_results_production <- rbind(
+    t_test_results_production,
+    data.frame(
+      Production_Company = company,
+      Mean = mean_val,
+      t_statistic = t_stat,
+      df = df_val,
+      p_value = p_val,
+      CI_lower = ci_lower,
+      CI_upper = ci_upper,
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+# results table
+kable(t_test_results_production)
+
+```
+
+Interpretation: 
+
+The t-test analysis of production companies reveals significant disparities in critical reception, as evidenced by p-values and statistical significance. Sony Pictures Classics achieves a mean score of 73.11, supported by a highly significant p-value, highlighting its strong critical reception. Similarly, IFC Films and Focus Features demonstrate statistically significant results, with mean scores of 62.92 and 66.69, respectively, reflecting their consistent ability to produce well-received films. Walt Disney Pictures and Magnolia Pictures also show significant p-values, with mean scores of 63.82 and 62.91, further affirming their positive critical reception.
+
+In contrast, 20th Century Fox, Paramount Pictures, and Warner Bros. Pictures exhibit significant underperformance, with mean scores of 45.92, 49.38, and 49.78, respectively, and p-values confirming their lower critical reception. Sony Pictures, with a mean score of 47.56, also shows significant evidence of weaker performance. Universal Pictures, while achieving a mean score of 52.19, does not display strong statistical significance, indicating greater variability in its results.
+
+The findings emphasize the role of statistical significance in highlighting differences between production companies. Smaller, niche-oriented studios such as Sony Pictures Classics, IFC Films, and Focus Features consistently achieve strong critical acclaim, as reflected by their highly significant p-values, while larger studios often struggle to achieve similar levels of success.
+
+#### Table 4
+```{r}
+# overall Mean Tomatometer Rating
+overall_mean <- mean(RTmovies.1$tomatometer_rating, na.rm = TRUE)
+
+hist(RTmovies.1$runtime, 
+     main = "Distribution of Movie Runtimes",
+     xlab = "Runtime (minutes)", 
+     breaks = 30, 
+     col = "darkblue")
+
+# Runtime Bins
+runtime_bins <- c(0, 90, 120, 150, 180, Inf)  # Example bins: <=90, 91-120, 121-150, 151-180, >180 minutes
+runtime_labels <- c("<=90", "91-120", "121-150", "151-180", ">180")
+
+# runtime to numeric + create runtime bins
+RTmovies.1$runtime <- as.numeric(RTmovies.1$runtime)
+
+RTmovies.1 <- RTmovies.1 %>%
+  mutate(runtime_bin = cut(runtime, 
+                           breaks = runtime_bins, 
+                           labels = runtime_labels, 
+                           right = FALSE, 
+                           include.lowest = TRUE))
+
+# num observations per Runtime Bin
+runtime_counts <- RTmovies.1 %>%   
+  group_by(runtime_bin) %>%   
+  summarise(count = n()) %>%   
+  arrange(desc(count))  
+
+# Runtime Bins with Sufficient Observations
+sufficient_runtime_bins <- runtime_counts %>%   
+  filter(count >= 2) %>%   
+  pull(runtime_bin)  
+
+insufficient_runtime_bins <- runtime_counts %>%   
+  filter(count < 2) %>%   
+  pull(runtime_bin)  
+
+# One-Sample T-Tests for Each bin  
+
+t_test_results_runtime <- data.frame(   
+  Runtime_Bin = character(),   
+  Mean_Tomatometer_Rating = numeric(),   
+  t_statistic = numeric(),   
+  degrees_of_freedom = numeric(),   
+  p_value = numeric(),   
+  CI_lower = numeric(),   
+  CI_upper = numeric(),   
+  stringsAsFactors = FALSE 
+)  
+
+# character column for safe comparison
+RTmovies.1$runtime_bin <- as.character(RTmovies.1$runtime_bin)
+
+# one-sample t-test 
+for (bin in sufficient_runtime_bins) {   
+  bin_data <- RTmovies.1 %>% 
+    filter(runtime_bin == bin) %>% 
+    select(tomatometer_rating) %>%
+    drop_na()  
+  
+
+  mean_val <- mean(bin_data$tomatometer_rating, na.rm = TRUE)  
+  
+  #  one-sample t-test   vs overall mean 
+  t_test <- tryCatch(     
+    t.test(bin_data$tomatometer_rating, mu = overall_mean)
+  )      
+  
+  # if error, skip to next iteration   
+  if (is.null(t_test)) {     
+    next   
+  }      
+  
+  # statistics   
+  t_stat <- as.numeric(t_test$statistic)   
+  df_val <- as.numeric(t_test$parameter)   
+  p_val <- as.numeric(t_test$p.value)   
+  ci_lower <- as.numeric(t_test$conf.int[1])   
+  ci_upper <- as.numeric(t_test$conf.int[2])   
+      
+  # results to  df   
+  t_test_results_runtime <- rbind(t_test_results_runtime, data.frame(
+    Runtime_Bin = bin,
+    Mean_Tomatometer_Rating = mean_val,
+    t_statistic = t_stat,
+    degrees_of_freedom = df_val,
+    p_value = p_val,
+    CI_lower = ci_lower,
+    CI_upper = ci_upper,
+    stringsAsFactors = FALSE
+  ))   
+}  
+
+kable(t_test_results_runtime)
+```
+
+Interpretation: 
+
+The analysis of movie runtimes reveals a significant relationship between runtime and critical reception as measured by Tomatometer ratings, with p-values and statistical significance providing key insights. The histogram shows that most movies fall within the 90–120 minute range, peaking around 100 minutes, while runtimes exceeding 150 minutes are far less common. Films over 180 minutes are particularly rare, highlighting the industry's focus on shorter runtimes.
+
+The t-test analysis demonstrates that films in the 91–120 minute category achieve an average score of 55.85, which is statistically significant, indicating that these runtimes produce moderately successful films. Shorter films, with runtimes of 90 minutes or less, have an average score of 57.41; however, the lack of statistical significance for this group suggests that short runtimes do not strongly influence critics’ ratings.
+
+In contrast, films with longer runtimes consistently receive higher ratings with statistically significant results. Movies in the 121–150 minute range achieve an average score of 66.22, reflecting strong critical reception. This trend becomes even more pronounced in the 151–180 minute category, with an average score of 75.01. Films exceeding 180 minutes are the most critically acclaimed, with an average score of 81.00 and statistically significant results confirming their exceptional reception. These findings suggest that extended runtimes may allow for greater narrative depth and complexity, which are often rewarded by critics.
+
+Overall, the analysis reveals a strong positive relationship between runtime and critical acclaim, particularly for films exceeding 120 minutes. While shorter and more frequent runtimes achieve moderate success, longer films are consistently associated with higher ratings. The rarity of these longer movies, as shown in the histogram, underscores their exceptional nature and the significant critical acclaim they receive.
+
+
+### Preliminary Findings
+
+The analysis of movie data revealed critical insights into the factors that influence Rotten Tomatoes critic scores (Tomatometer ratings). By synthesizing findings from visualizations and statistical tests, the relationships between runtime, critic counts, content ratings, genres, production companies, and seasonal trends emerge as key determinants of critical reception.
+
+The relationship between movie runtime and critic scores shows a weak but consistent pattern. While Figure 1 highlights a slight positive correlation (R^2 = 0.017), indicating runtime explains only 1.7% of the variation in scores, deeper insights emerge from Figures 4 and Table 4. Longer movies (120+ minutes) achieve higher average ratings, with movies exceeding 180 minutes receiving the highest average score of 81%. This trend suggests that extended runtimes allow for greater narrative depth, contributing to higher critical acclaim. Conversely, shorter films (≤90 minutes) show moderate scores but lack statistically significant evidence of superior reception. This reveals that while runtime alone is not a strong predictor, it correlates positively with critical success for longer movies.
+
+Figures 2 and 6 explore the relationship between critic review counts and ratings, showing a similarly weak correlation (R^2 = 0.017). Movies receiving more reviews tend to achieve higher average scores, with those in the high-review count category averaging 62.6%. While variability persists across all categories, the trend suggests that greater critical attention is associated with higher ratings, likely reflecting broader interest in higher-quality films.
+
+Content ratings significantly influence critical reception, as demonstrated in Figures 3 and 11 and Table 2. NR films consistently achieve the highest average ratings (71.4%), followed by niche NC-17 films, though the latter's small sample size limits generalizability. G-rated (family-friendly) films also perform well, with an average rating of 62.7% and a strong upward trend over time, reaching near-universal acclaim in recent years. In contrast, PG-13 movies consistently receive the lowest scores (50.3%), suggesting weaker critical appeal. These findings underscore the impact of content ratings on critical reception, with niche and family-oriented categories often outperforming broader-audience films.
+
+Genres exhibit significant disparities in critical reception, as illustrated in Figures 7 and 12 and Table 1. Documentaries emerge as the highest-performing genre (79.1%), followed by Art House & International films (71.3%) and Cult Movies (71.7%). In contrast, Romance (36.1%) and Horror (47.1%) significantly underperform, with consistently lower scores. Over time, genres such as Animation and Kids & Family exhibit upward trends, reflecting improved reception in recent years. The variability in certain genres, such as Horror and Musical & Performing Arts, reflects mixed critical opinions and inconsistency in quality. These insights highlight genre as a pivotal predictor in understanding critical reception.
+
+Production companies demonstrate clear disparities in critical success, as shown in Figures 5 and 13 and Table 3. Sony Pictures Classics leads with an average score of 73.1%, followed by IFC Films (62.9%) and Focus Features (66.7%). In contrast, larger studios such as 20th Century Fox (45.9%) and Warner Bros. (49.8%) show weaker performance, reflecting broader variability in output. Over time, companies like Warner Bros. and Focus Features show upward trends, indicating strategic improvements in producing critically acclaimed films. These results emphasize the influence of institutional reputation and resources on critical success.
+
+Seasonal release timing impacts critical reception, as seen in Figure 8. Movies released in November consistently achieve the highest ratings (63.2%), aligning with awards season when studios strategically release high-quality films. In contrast, January and February releases receive the lowest ratings (51.0% and 52.5%, respectively), likely reflecting a focus on lower-budget or less-promoted projects. These seasonal patterns highlight the importance of timing in shaping critical reception.
+
+Figures 9 and 10 reveal long-term trends in critic scores and review counts. Average critic scores have risen steadily since 2010, climbing from around 50% in the early 2000s to approximately 65% by 2020. Simultaneously, the average number of top critic reviews per film peaked in 2015 before declining sharply. These trends suggest improving film quality, evolving critical standards, and industry shifts such as the rise of streaming platforms.
+
+In conclusion, the preliminary findings highlight nuanced relationships between various factors and Rotten Tomatoes critic scores. While runtime and critic review counts show weak overall correlations, longer runtimes and higher review counts are associated with improved ratings. Content ratings and genres emerge as significant predictors, with niche, family-friendly, and documentary films often outperforming others. Production companies and seasonal release timing also play crucial roles in shaping critical reception. Finally, the upward trend in critic scores reflects broader changes in industry dynamics and critical standards. These insights provide a solid foundation for predictive modeling and deeper exploration into the determinants of critical success in the movie industry.
+
+
+# Advanced Statistical Models
+
+```{r}
+# As the data was edited during the construction of the plots, it needs to be re-
+# initialized before modeling, as was done below
+
+RTreviews <- read_csv("rotten_tomatoes_critic_reviews.csv")
+RTmovies <- read_csv("rotten_tomatoes_movies.csv")
+
+# Review data set cleaning 
+RTreviews <- merge(RTreviews, RTmovies[, c("rotten_tomatoes_link", "original_release_date")], by = "rotten_tomatoes_link")
+
+RTreviews <- RTreviews %>% filter(as.Date(original_release_date) > as.Date(review_date))
+
+RTreviews <- RTreviews %>%
+  group_by(rotten_tomatoes_link) %>%
+  mutate(
+    fresh_percent = mean(review_type == "Fresh") * 100,
+    review_count = n(),
+    top_critic_count = sum(top_critic == "TRUE")
+    ) 
+
+
+
+# Movie dataset cleaning
+RTmovies.1 <- RTmovies %>%
+  filter(tomatometer_count > 12) %>%
+  select(-tomatometer_count, -tomatometer_fresh_critics_count, -tomatometer_rotten_critics_count, -tomatometer_status, -tomatometer_top_critics_count, -critics_consensus, -movie_title, -audience_count, -streaming_release_date, -movie_info, -audience_status, -audience_rating) 
+
+RTmovies.1$original_release_date <- as.Date(RTmovies.1$original_release_date, format = "%Y-%m-%d")
+
+RTmovies.1 <- RTmovies.1 %>%
+  separate(directors, into = c("dir1"), sep = ", ", fill = "right") %>%
+  separate(actors, into = c("actr1", "actr2"), sep = ", ", fill = "right") %>% 
+  separate(genres, into = c("gen1"), sep = ", ", fill = "right") %>%
+  subset(original_release_date >= as.Date("1998-01-01"))
+
+# Merging variables from review dataset
+RTmovies.1 <- merge(RTmovies.1, 
+                    RTreviews[, c("rotten_tomatoes_link", "fresh_percent", 'review_count', 'top_critic_count')], 
+                    by = "rotten_tomatoes_link", 
+                    all.x = T)
+
+#Removing NA values
+RTmovies.1 <- RTmovies.1 %>%
+  distinct(rotten_tomatoes_link, .keep_all = TRUE)
+
+RTmovies.1 <- na.omit(RTmovies.1)
+```
+
+
+
+### Random Forest Model
+```{r}
+set.seed(123)
+
+
+features <- c(
+  'content_rating', 
+  'gen1', 
+  'original_release_date',
+  'production_company',
+  'fresh_percent',
+  'review_count',
+  'top_critic_count'
+)
+
+# data to training and testing sets
+train_index <- createDataPartition(RTmovies.1$tomatometer_rating, p = 0.7, list = FALSE)
+train_data <- RTmovies.1[train_index, ]
+test_data <- RTmovies.1[-train_index, ]
+
+rf_formula <- as.formula(paste("tomatometer_rating ~", 
+                                paste(features, collapse = " + ")))
+
+cv_control <- trainControl(method = "cv", number = 10)
+
+# Random Forest Model
+rf_model <- randomForest(
+  formula = rf_formula,
+  data = train_data,
+  trControl = cv_control,
+  ntree = 500,         
+  mtry = sqrt(length(features)),  
+  importance = TRUE,    
+  do.trace = FALSE
+)
+```
+
+  The first model conducted with the cleaned data was a Random Forest model. The decision to use a Random Forest method was made on the basis that these models are proficient in encoding categorical variables with many levels, (ex. genre, actor, director, production company, etc.) and drawing on non-linear associations between these variables while effectively incorporating continuous numerical variables into the final model as well. Other tree based methods were considered, but the regression tree's difficulty handling categorical variables without complex encoding, as well as its deficiencies with predicting continuous outcomes, made these options less appealing. 
+    
+  In the model's current form, it includes the variables content rating, genre, release date, production company, percentage of "fresh" reviews, number of reviews, and the number of top critics. There are over 2,000 observations in the total data set, which has been split into training (70%) and testing (30%) sets, with the training set undergoing 10 fold cross validation to ensure the integrity of the results. The model utilizes 500 prediction trees, which provides a strong balance between prediction and performance, as more could slightly lower RMSE, but could be too computationally expensive when taking efficiency into account. Original iterations of the model, included additional variables primary actor, secondary actor, and primary director, however, these variables were removed due to their negative impact on the MSE/RMSE of the model. 
+  
+  
+  
+#### Table 5  
+```{r}
+# RF variable importance table
+var_importance <- importance(rf_model)
+
+kable(var_importance, caption = "Random Forest Variable Importance")
+```
+
+  Looking further at the variables and their effect on the model's MSE, we refer to Table 5. The variables listed constitute all those included in the final model, with the "%IncMSE," and "IncNodePurity" referring to how much each variable contributes to the final model, with larger values equaling a greater contribution. In Table 5, variables like genre (gen1), and release date provide helpful but minor contributions, while the percentage of fresh pre-release reviews (fresh_percent) has by far the largest node purity value, as well as constituting the largest change in MSE. Production company, while owning the smallest MSE increase at 5.23%, still worsens the model slightly if removed. In summary, these results point to the fact that the percentage of fresh reviews is by far the most effective predictor variable, but the additional data given by other predictors fills in some of the gaps that it cannot predict by itself. 
+  
+  
+  
+#### Table 6
+```{r}
+# RF metrics table
+predictions <- predict(rf_model, test_data)
+actual <- test_data$tomatometer_rating
+comparison <- data.frame(actual = actual, predictions = predictions)
+
+mse <- mean((test_data$tomatometer_rating - predictions)^2)
+mae <- mean(abs(test_data$tomatometer_rating - predictions))
+rmse <- sqrt(mse)
+
+result <- data.frame(
+    MSE = mse,
+    MAE = mae,
+    RMSE = rmse
+  )
+
+kable(result, caption = "Random Forest Regression Metrics")
+```
+
+  When looking at MSE, RMSE, and MAE to asses model accuracy there are several things to consider. The first is that RMSE is simply the root of MSE, which allows RMSE to be interpreted as units of prediction rather than a model accuracy metric like MSE. The second is that MAE, while able to be interpreted similarly to RMSE, does not penalize outlying values as heavily. This is due to the fact that MAE is minimized by the conditional median, while the MSE/RMSE is minimized by the conditional mean, so MAE is less sensitive to outliers as a byproduct (Hodson, 2022). Despite this distinction, both metrics indicate that the model is seeing the data effectively. In Table 6, the RMSE of the Random Forest model is reported as 9.7, while the MAE is 6.7, meaning that the average distance between actual and predicted values with heavily weighted outliers is 9.7, and with less weighted outliers it is 6.7.
+  
+  
+
+#### Figure 14
+```{r}
+# RF actual vs predicted plot
+
+plot_results <- data.frame(
+  actual = test_data$tomatometer_rating,
+  predicted = predictions
+)
+
+
+ggplot(plot_results, aes(x = actual, y = predicted)) +
+  geom_point(col = "darkblue") +  
+  geom_abline(slope = 1, intercept = 0, color = "red") +  
+  labs(
+    x = "Actual Scores", 
+    y = "Predicted Scores", 
+    title = "Actual vs Predicted Rotten Tomatoes Scores",
+  ) +
+  theme_minimal()
+```
+
+  The plot above (Figure 14) backs up the RMSE and MAE's sentiment that the model is seeing the test data relatively well. According to the distribution, there is a clear trend, however, there are clear outliers as well, with the model occasionally over-predicting or under-predicting scores. There also seems to be a noticeable cluster of correctly predicted high scores, which indicates that the model likely sees these types of scores well. This observation also backs up a known factor about the dataset, that there are many highly rated films. Additionally, these factors could indicate overfitting or over prediction for these high scores, especially when taking into account their presence in the data, and tendency of the model to predict these values correctly at a respectable rate. 
+  
+  
+
+#### Table 7
+```{r}
+# RF Binned actual vs predicted values table
+plot_results <- plot_results %>%
+   mutate(difference = abs(actual-predicted)) %>%
+    mutate(
+    bins = case_when(
+      difference > 0 & difference <= 5 ~ "0-5",
+      difference > 5 & difference <= 10 ~ "5-10",
+      difference > 10 & difference <= 15 ~ "10-15",
+      difference > 15 ~ "15+"
+    )
+  ) %>%
+  mutate(bins = factor(bins, levels = c("0-5", "5-10", "10-15", "15+"))) %>% 
+  group_by(bins) %>%
+  summarise(
+    count = n(),
+    Percentage = round(100 * count / nrow(plot_results), 2),
+    .groups = "drop"
+  )
+
+
+kable(plot_results, col.names = c("Range", "Count", "Percentage"), caption = "Difference Between Actual and Predicted Values")
+
+
+```
+
+  Table 7, above, illustrates how close the model's predicted values are to real rotten tomatoes critic scores, sorting predictions into bins based on their "Range," or distance from their actual scores. The binned values from the table indicate that most of the model's predictions are within a favorable range of their actual values, just as Table 7 illustrates. Over 50% of the model's predictions came in within 5 points or less of the actual score. Combing the "Percentage" values of "Ranges," "0-5," and "5-10," highlights the fact that nearly 80% of all value predictions came within 10 points or fewer of their real Rotten Tomatoes critic score. Despite the positive assessment, about 10% of predictions are still major outliers, lying over 15 points away from their actual scores. One potential reason for the significant amount of outliers could be due to over-reliance on specific variables, which will be covered in the conclusion. 
+  
+  
+
+### KNN Model
+```{r}
+set.seed(123)
+
+features <- c(
+  'content_rating', 
+  'gen1', 
+  'original_release_date',
+  'fresh_percent',
+  'review_count',
+  'top_critic_count'
+)
+
+
+tree_formula <- as.formula(paste("tomatometer_rating ~", 
+                                 paste(features, collapse = " + ")))
+
+train_index <- createDataPartition(RTmovies.1$tomatometer_rating, p = 0.7, list = FALSE)
+train_data <- RTmovies.1[train_index, ]
+test_data <- RTmovies.1[-train_index, ]
+
+
+train_control <- trainControl(method = "cv", number = 10)
+
+
+tree_model <- train(tree_formula, 
+                   data = train_data, 
+                   method = "knn", 
+                   trControl = train_control, 
+                   preProcess = "center", 
+                   metric = "RMSE")
+```
+
+  The second model deployed in the prediction of Rotten Tomatoes critic scores was a KNN or K-Nearest Neighbors regression model. This model was chosen specifically because of its ability to capitalize on complex, potentially nonlinear numerical data from the dataset. While KNN struggles with categorical variables with man levels like production company, (as was mentioned about tree-based regressions in the Random Forest section) the model's ability to use Euclidian distance to form potentially non-linear connections, and provide a continuous outcome, were important factors to consider (Scarcioffolo, 2024). Additionally, removing a complex variable could potentially benefit the model as well, with KNN typically performing better with fewer complex predictors (Scarcioffolo, 2024). In building the model, the production company variable was left out, as removing small production companies and encoding them threatened to compromise the integrity of the data. Other variables like content rating and release date could kept in the model without these same concerns. Additionally, the Random Forest model indicates that numerical values such as the percentage of fresh reviews and review count were enormously important in the variable selection process, while genre and production company were not (see Table 5). 
+  
+  The KNN model includes the variables content rating, genre, release date, fresh review percentage, review count, and the number of top critics. Just as with the Random Forest model, there are over 2,000 observations in the total data set, which has been split into training (70%) and testing (30%) sets, with the training set undergoing 10 fold cross validation to ensure the integrity of the results. Within the cross validation function of the "caret" package, the "K" value, or the number of "nearest neighbors," is automatically selected based on which has the lowest corresponding RMSE value. This KNN model also centers the data before executing, as KNN models are very sensitive to scaling factors (Scarcioffolo, 2024). The model utilizes RMSE/MSE, as well as MAE, to assist in defining accuracy, as well as for comparison with the Random Forest Model.
+  
+  
+  
+
+#### Table 8
+```{r}
+# KNN Metrics Table
+predictions <- predict(tree_model, test_data)
+
+mse <- mean((test_data$tomatometer_rating - predictions)^2)
+mae <- mean(abs(test_data$tomatometer_rating - predictions))
+rmse <- sqrt(mse)
+
+
+result_table <- data.frame(
+    MSE = mse,
+    MAE = mae,
+    RMSE = rmse
+  )
+
+kable(result_table, caption = "KNN Regression Metrics")
+```
+
+  Despite the removal of the production studio predictor, the KNN model still performed quite well. As Table 8 indicates, the RMSE was 13.2, which indicates that the model was off by an average of 13.2 points in the critic score; as the RMSE was good, this also indicates a good MSE. The MAE for the model, which weights outliers less heavily due to its minimization by the median (Hodson, 2022), was 10.1. While these numbers indicate relatively good performance, looking back at the Random Forest metrics in Table 6, we can see that the KNN model was outperformed in every metric. It is possible that removing the production company variable could account for this, but referring back to Table 6 again, it is clear that there is a heavy amount of reliance on one variable to make predictions as well. This reliance, combined with the removal of a variable, could be the cause of this slight dip in accuracy. 
+  
+  
+
+#### Figure 15
+```{r}
+# K vs RMSE Plot
+result_plot <- tree_model$results
+
+ggplot(result_plot, aes(x = k, y = RMSE)) +
+  geom_line(color = "darkblue") +
+  geom_point(color = "red") +
+  labs(title = "RMSE vs K",
+       x = "Number of Neighbors (k)",
+       y = "RMSE") +
+  theme_minimal()
+```
+
+  In the plot above (Figure 15) the optimal "K value chosen by the "caret" package is plotted against RMSE. The optimal value of "K" is based not only on the lowest RMSE, but on the RMSE from the cross validation on the training dataset. If attempting to match the RMSE from Table 8, with the data presented on Figure 15, the optimal "K" would be around 7.5, which is not possible, as the value must be a whole number, which indicates that the optimal "K" changes between the training and test sets. The optimal "K" value according to the plot above, which incorporates the model's predictions on the test set, would be 5. This points to potential overfitting in the training data, which is likely due to the topheavy nature of the critic scores, as was mentioned in the context of the Random Forest model. However, there are other factors to consider, as a low number of neighbors could allow the model to be susceptible to outliers, which already seems to be somewhat of an issue. 
+  
+  
+
+#### Figure 16
+```{r}
+# KNN actual vs predicted plot
+plot_results <- data.frame(
+  actual = test_data$tomatometer_rating,
+  predicted = predictions
+)
+
+ggplot(plot_results, aes(x = actual, y = predicted)) +
+  geom_point(col = "darkblue") +  
+  geom_abline(slope = 1, intercept = 0, color = "red") +  
+  labs(
+    x = "Actual Scores", 
+    y = "Predicted Scores", 
+    title = "Actual vs Predicted Rotten Tomatoes Scores"
+  ) +
+  theme_minimal()
+```
+
+  The fit of the KNN predictions in Figure 16 closely mirrors that of the predictions in Figure 14. However, as the RMSE and MAE suggest in Tables 8 and 6, the fit of the Random Forest model is still noticeably tighter. This is corroborated by the figure above, and even the large number of high predictions present in Figure 14 of Random Forest model, is also present here in Figure 16. A difference between the two, however seems to be the number of low predictions, as KNN certainly has more. These under predictions could be a byproduct of the absence of the production company, as these organizations typically have significant influence on who gets to review movies before their official release, potentially leading to more favorable reviews. 
+
+
+```{r}
+# KNN Binned actual vs predicted values table 
+plot_results <- plot_results %>%
+   mutate(difference = abs(actual-predicted)) %>%
+    mutate(
+    bins = case_when(
+      difference > 0 & difference <= 5 ~ "0-5",
+      difference > 5 & difference <= 10 ~ "5-10",
+      difference > 10 & difference <= 15 ~ "10-15",
+      difference > 15 ~ "15+"
+    )
+  ) %>%
+  mutate(bins = factor(bins, levels = c("0-5", "5-10", "10-15", "15+"))) %>% 
+  group_by(bins) %>%
+  summarise(
+    count = n(),
+    Percentage = round(100 * count / nrow(plot_results), 2),
+    .groups = "drop"
+  )
+plot_results <- na.omit(plot_results)
+
+kable(plot_results, col.names = c("Range", "Count", "Percentage"), caption = "Difference Between Actual and Predicted Values")
+```
+
+ Similar to that of the Random Forest model, Table 9, above, illustrates how close the model's predicted values are to real rotten tomatoes critic scores, sorting predictions into bins based on their "Range," or distance from their actual scores. The table shows that only 31% of KNN predicted values fall within 5 points of the actual value from the test dataset. Just under 60% of total predictions are 10 or fewer points from their predictions, adding percentages from the "0-5," and, "5-10" bins in Table 9. This is far from the accuracy of the Random Forest model, as nearly 80% of predicted values were less than or equal to 10 points off the actual test set values. Additionally, over a fifth of predicted values in Table 9 of the KNN model were over 15 points away from the actual test set rotten tomatoes scores. 
+
+# Conclusions
+
+  This insightful analysis into Rotten Tomatoes critic scores opens many avenues to productive current use and further development. In terms of current use, the Random Forest model has much more immediate upside in terms of its predictive power versus the KNN model. The RMSE in Table 6 indicates a weighted average of 9.7 points difference between actual and expected values, and accuracy metrics from Table 7 indicate that predicted values are 10 points or less from actual scores just over 79% of the time. In the "Score Prediction Function" below, it is possible to input values to predict movies using the trained Random Forest Model, which displays how the model can functionally predict values outside of training and testing. While these statistics certainly indicate a strong base for accurately predicting critic scores, there are caveats that prevent these models from becoming as accurate as comparable predictive models. 
+  
+  One of the initial goals in this project was to eventually compare these models to Consumer Price Indexes, such as Kalshi. Kalshi is a platform that allows "bettors" to trade contracts that act as "bets." This index relies specifically on what the refer to as "the wisdom of the masses," which essentially means that their forecasts are constantly updated by the preferences of the betting population (Beckhardt, n.d.). This creates a several problems for comparison with the models within this project, namely having to do with our data. 
+  
+  Firstly, platforms like Kalshi inevitably collect data from their traders or bettors, all of which is continually updated. The datasets used for this project were collected from Kaggle, and while they are accurate, this accuracy comes at the cost of recency. While the datasets used for this project only contain data through 2020, more recent datasets had fewer review metrics, offered fewer predictors, and had many missing values, preventing their use. Further, Kalshi is able to continually collect sentiment data by relying on this idea of "wisdom of the masses," (Beckhardt, n.d.) meaning that every bit of trading or betting activity can be used to analyze sentiment. Meanwhile, these Random Forest and KNN models rely on web-scraped reviews and limited additional sentiment. 
+  
+  Another issue with the current dataset is its reliance on one variable to make predictions. In Table 5 showing variable importance for the Random Forest model, there is one clear outlier. That variable would be the percentage of pre release "fresh" reviews, or "fresh_percent." This variable singlehandedly accounts for a 479% increase in the model's MSE, which makes all predictions somewhat single-faceted. Additionally, the percentage of "fresh" reviews becomes somewhat of a self fulfilling prophecy as you approach the release date, meaning the prediction power of the variable is much less reliable the farther it is from a film's release date. 
+  
+  Despite data inconsistencies that preclude this forecast from comparison with more sophisticated models, the comparison between KNN and Random Forest models display the efficacy of the Random Forest process, and illustrate the factors and variables that are most important in future model building. In addition to the difference in RMSE between the KNN and Random Forest models in Tables 6 and 8, the difference in accuracy displayed in Tables 7 and 9 validate the accuracy of the Random Forest against the KNN model, which, for all intents and purposes, is an effective baseline. Referring back to the Random Forest variable accuracy in Table 5, we can see that "fresh_percent," or the percentage of pre-release fresh reviews, was not only the only sentiment-driven variable in the model, was by far the best at predicting the final critics score. These findings point to the fact that sentiment among reviewers is by far the most important thing in the final prediction, but their reviews can be swayed by factors like genre, production company, and rating. 
+  
+  Future development of these models certainly needs to include sentiment analysis, either through text analysis, or through markets similar to Kalshi. Web scraping to get this data would have to be taken into consideration, as Rotten Tomatoes audience reviews can only be left on movies after their US release date (Rotten Tomatoes, n.d.). Additional steps should be taken towards testing models with sentiment gathered farther from release, as to avoid the issue of a "self fulfilling prophecy," as well as finding a way to control for the mean critic score rising over time, displayed in Figure 9. Further modeling could include gradient models, as they are adept at loss prevention, (Google Developers, n.d.) or further implementation of numerical sentiment data to improve KNN modeling. 
+  
+
+
+# Score Prediction Function
+```{r}
+
+run_rotten_tomatoes_prediction <- function() {
+  set.seed(123)
+  
+  #Example (replace values with your own)
+  movie_data <- data.frame(
+  content_rating = 'R', # string
+  gen1 = 'Action & Adventure', # string
+  original_release_date = as.Date("2023-09-09"), # date object
+  production_company = 'MGM', # string
+  fresh_percent = 90, # float
+  review_count = 12, # int
+  top_critic_count = 3 # int
+  )
+  
+
+  results <- predict(rf_model, movie_data)
+
+  kable(results, caption = "Predicted Tomatometer Score: ")
+}
+
+run_rotten_tomatoes_prediction()
+```
+
+
+
+
+# Citations
+
+Beckhardt, B. (n.d). *Harnessing the Power of Prediction Markets*.
+    Kalshi. 
+    https://kalshi.com/blog/article/harnessing-the-power-of-prediction-markets#
+    
+Google Developers. (n.d.). *Gradient descent In Machine Learning Crash Course*. 
+    Google. 
+    https://developers.google.com/machine-learning/crash-course/linear-regression/gradient-descent 
+    
+Gordon, M. (2009, January 5). *Why everyone lies about their movie's budget*. 
+    Los Angeles Times.  
+    https://www.latimes.com/archives/blogs/the-big-picture/story/2009-01-05/why-everyone-lies-about-their-movies-budget#:~:text=T     he%20problem%20that%20journalists%20have,got%20from%20three%20different%20executives
+
+Hodson, T. O. (2022, Jul 19).*Root-mean-square error (RMSE) or mean absolute error (MAE): when to use them or not*.
+    European Geosciences Union.
+    https://gmd.copernicus.org/articles/15/5481/2022
+    
+Rotten Tomatoes. (n.d.). *FAQ.*
+    Fandango Media. 
+    https://www.rottentomatoes.com/FAQ
+    
+Scarcioffolo, A. (2024). *KNN Regression*[HTML Slides].
+    Data Analytics, Denison University.
+    
+Surowiecki, J. (2015, February 16). *Rethinking the seasonal strategy*. 
+    The New Yorker.
+    https://www.newyorker.com/magazine/2015/02/23/rethinking-seasonal-strategy
+    
+Assistance with code & formatting: chat.openai.com, claude.ai
+
