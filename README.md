@@ -16,7 +16,7 @@ This project was created for Denison Data Analytics 352 class, taught by Dr. Ale
 
 Build Status:
 
-The project, overseen by Dr. Scarcioffolo, reached its conclusion in December 2024. Further ideas, additions, revisions, and recommendations are welcome. 
+The project, overseen by Dr. Scarcioffolo, reached its conclusion in December 2024. Further ideas, additions, revisions, and recommendations are welcome. The data files are too large to be included in the repository and can be found [here.](https://drive.google.com/drive/folders/1vRu5uNGYLyuwVggumo_QPEVPjrO0qZju?usp=sharing)
 
 
 Requirements:
